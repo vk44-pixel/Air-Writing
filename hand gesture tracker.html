@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AirDraw - Hand Gesture Drawing</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #121212;
+            color: white;
+            font-family: 'Inter', sans-serif;
+            touch-action: none;
+        }
+
+        #canvas-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        /* The main drawing canvas */
+        #drawing-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+
+        /* Hidden video element for processing */
+        #video-element {
+            display: none;
+        }
+
+        /* Overlay for hand tracking feedback */
+        #tracking-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 5;
+            pointer-events: none;
+            opacity: 0.5;
+        }
+
+        #ui-panel {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            background: rgba(30, 30, 30, 0.8);
+            backdrop-filter: blur(10px);
+            padding: 15px 25px;
+            border-radius: 30px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        .color-btn {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+
+        .color-btn:hover {
+            transform: scale(1.1);
+        }
+
+        .color-btn.active {
+            border: 2px solid white;
+            transform: scale(1.15);
+        }
+
+        .control-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .divider {
+            width: 1px;
+            height: 30px;
+            background: rgba(255,255,255,0.2);
+            margin: 0 10px;
+        }
+
+        #clear-btn {
+            background: rgba(255, 59, 48, 0.2);
+            color: #ff3b30;
+            border: 1px solid rgba(255, 59, 48, 0.5);
+            padding: 8px 15px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        #clear-btn:hover {
+            background: rgba(255, 59, 48, 0.4);
+        }
+
+        #status-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(18, 18, 18, 0.9);
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            transition: opacity 0.5s;
+        }
+
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        #status-text {
+            font-size: 1.2rem;
+            letter-spacing: 1px;
+        }
+
+        .instructions {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 20;
+            background: rgba(0,0,0,0.5);
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            text-align: center;
+            pointer-events: none;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+
+        /* Brush size slider styling */
+        input[type=range] {
+            -webkit-appearance: none;
+            width: 100px;
+            background: transparent;
+        }
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            height: 16px;
+            width: 16px;
+            border-radius: 50%;
+            background: #ffffff;
+            cursor: pointer;
+            margin-top: -6px;
+        }
+        input[type=range]::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 4px;
+            cursor: pointer;
+            background: rgba(255,255,255,0.3);
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status-overlay">
+        <div class="loader"></div>
+        <div id="status-text">Loading Hand Tracking Models...</div>
+    </div>
+
+    <div class="instructions">
+        <i class="fas fa-hand-pointer mr-2"></i> Point with Index Finger to Draw
+    </div>
+
+    <div id="canvas-container">
+        <!-- Video element for capturing webcam (hidden) -->
+        <video id="video-element" autoplay playsinline></video>
+        
+        <!-- Canvas to show hand landmarks for feedback -->
+        <canvas id="tracking-canvas"></canvas>
+        
+        <!-- Main canvas where drawing happens -->
+        <canvas id="drawing-canvas"></canvas>
+    </div>
+
+    <!-- UI Panel -->
+    <div id="ui-panel">
+        <div class="control-group" id="color-palette">
+            <!-- Colors will be injected here by JS -->
+        </div>
+        
+        <div class="divider"></div>
+        
+        <div class="control-group flex flex-col items-center gap-1">
+            <span class="text-xs text-gray-400">Brush Size</span>
+            <input type="range" id="brush-size" min="2" max="30" value="8">
+        </div>
+
+        <div class="divider"></div>
+
+        <button id="clear-btn">
+            <i class="fas fa-trash-alt"></i> Clear
+        </button>
+    </div>
+
+    <script>
+        const videoElement = document.getElementById('video-element');
+        const trackingCanvasElement = document.getElementById('tracking-canvas');
+        const trackingCtx = trackingCanvasElement.getContext('2d');
+        
+        const drawingCanvasElement = document.getElementById('drawing-canvas');
+        const drawingCtx = drawingCanvasElement.getContext('2d', { willReadFrequently: true });
+        
+        const statusOverlay = document.getElementById('status-overlay');
+        const statusText = document.getElementById('status-text');
+
+        // Application State
+        let isDrawing = false;
+        let lastX = 0;
+        let lastY = 0;
+        let currentColor = '#00E5FF'; // Default color (Cyan)
+        let brushSize = 8;
+        
+        // Smoothing variables for higher accuracy
+        let smoothedX = null;
+        let smoothedY = null;
+        const SMOOTHING_FACTOR = 0.4; // 0.1 to 1.0 (Lower is smoother)
+        
+        // Colors for palette
+        const colors = [
+            '#FF3B30', // Red
+            '#FF9500', // Orange
+            '#FFCC00', // Yellow
+            '#4CD964', // Green
+            '#00E5FF', // Cyan
+            '#007AFF', // Blue
+            '#5856D6', // Purple
+            '#FFFFFF'  // White
+        ];
+
+        function resizeCanvases() {
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            
+            // Save current drawing
+            let tempCanvas = document.createElement('canvas');
+            let tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = drawingCanvasElement.width;
+            tempCanvas.height = drawingCanvasElement.height;
+            if(drawingCanvasElement.width > 0 && drawingCanvasElement.height > 0) {
+                tempCtx.drawImage(drawingCanvasElement, 0, 0);
+            }
+
+            trackingCanvasElement.width = width;
+            trackingCanvasElement.height = height;
+            drawingCanvasElement.width = width;
+            drawingCanvasElement.height = height;
+            
+            // Mirror contexts for front camera
+            trackingCtx.translate(width, 0);
+            trackingCtx.scale(-1, 1);
+            
+            // We don't mirror drawing ctx globally to avoid mirroring the drawn image, 
+            // instead we mirror coordinates when drawing.
+            
+            // Restore drawing
+            if(tempCanvas.width > 0) {
+                drawingCtx.drawImage(tempCanvas, 0, 0);
+            }
+        }
+
+        window.addEventListener('resize', resizeCanvases);
+
+        function initUI() {
+            const palette = document.getElementById('color-palette');
+            
+            colors.forEach(color => {
+                const btn = document.createElement('div');
+                btn.className = 'color-btn';
+                btn.style.backgroundColor = color;
+                if (color === currentColor) btn.classList.add('active');
+                
+                btn.addEventListener('click', () => {
+                    document.querySelectorAll('.color-btn').forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    currentColor = color;
+                });
+                
+                palette.appendChild(btn);
+            });
+
+            document.getElementById('clear-btn').addEventListener('click', () => {
+                drawingCtx.clearRect(0, 0, drawingCanvasElement.width, drawingCanvasElement.height);
+            });
+
+            const brushSlider = document.getElementById('brush-size');
+            brushSlider.addEventListener('input', (e) => {
+                brushSize = parseInt(e.target.value);
+            });
+        }
+
+        // Utility to check geometric distance between two landmarks
+        function getDistance(p1, p2) {
+            return Math.sqrt(Math.pow(p1.x - p2.x, 2) + Math.pow(p1.y - p2.y, 2));
+        }
+
+        // Improved heuristic: checks distance from wrist to ensure only index finger is extended
+        // This works at any hand angle, unlike the previous Y-axis only check.
+        function isPointing(landmarks) {
+            const wrist = landmarks[0];
+            
+            // Calculate distances from wrist to tips and MCPs (base of fingers)
+            const indexTipDist = getDistance(landmarks[8], wrist);
+            const indexMcpDist = getDistance(landmarks[5], wrist);
+            
+            const middleTipDist = getDistance(landmarks[12], wrist);
+            const middleMcpDist = getDistance(landmarks[9], wrist);
+            
+            const ringTipDist = getDistance(landmarks[16], wrist);
+            const ringMcpDist = getDistance(landmarks[13], wrist);
+            
+            const pinkyTipDist = getDistance(landmarks[20], wrist);
+            const pinkyMcpDist = getDistance(landmarks[17], wrist);
+
+            // Index should be extended (tip significantly further than MCP)
+            const isIndexExtended = indexTipDist > indexMcpDist * 1.25;
+            
+            // Other fingers should be curled (tips closer to wrist than their respective MCPs)
+            const isMiddleCurled = middleTipDist < middleMcpDist * 1.1;
+            const isRingCurled = ringTipDist < ringMcpDist * 1.1;
+            const isPinkyCurled = pinkyTipDist < pinkyMcpDist * 1.1;
+
+            return isIndexExtended && isMiddleCurled && isRingCurled && isPinkyCurled;
+        }
+
+        function onResults(results) {
+            // Clear tracking canvas for new frame
+            trackingCtx.save();
+            trackingCtx.clearRect(0, 0, trackingCanvasElement.width, trackingCanvasElement.height);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                // Get the first hand detected
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // Draw hand skeleton on tracking canvas
+                drawConnectors(trackingCtx, landmarks, HAND_CONNECTIONS, {color: 'rgba(255, 255, 255, 0.2)', lineWidth: 2});
+                drawLandmarks(trackingCtx, landmarks, {color: 'rgba(255, 255, 255, 0.5)', lineWidth: 1, radius: 2});
+
+                // Get index finger tip coordinates (Landmark 8)
+                const indexTip = landmarks[8];
+                
+                // Convert normalized coordinates [0, 1] to canvas coordinates
+                // NOTE: Camera feed is mirrored. drawingCtx is NOT mirrored, trackingCtx IS mirrored.
+                const targetX = (1 - indexTip.x) * drawingCanvasElement.width; 
+                const targetY = indexTip.y * drawingCanvasElement.height;
+
+                // Apply Exponential Moving Average (EMA) for smoothing to reduce jitter
+                if (smoothedX === null || smoothedY === null || !isDrawing) {
+                    smoothedX = targetX;
+                    smoothedY = targetY;
+                } else {
+                    smoothedX = smoothedX + (targetX - smoothedX) * SMOOTHING_FACTOR;
+                    smoothedY = smoothedY + (targetY - smoothedY) * SMOOTHING_FACTOR;
+                }
+
+                // Check if user is in "pointing" gesture to draw
+                if (isPointing(landmarks)) {
+                    // Draw a visual indicator on tracking canvas that we are drawing
+                    trackingCtx.beginPath();
+                    // trackingCtx is already horizontally mirrored, so we pass indexTip.x directly for perfect alignment
+                    trackingCtx.arc(indexTip.x * trackingCanvasElement.width, indexTip.y * trackingCanvasElement.height, brushSize/2 + 2, 0, 2 * Math.PI);
+                    trackingCtx.fillStyle = currentColor;
+                    trackingCtx.fill();
+
+                    if (!isDrawing) {
+                        // Just started drawing
+                        isDrawing = true;
+                        lastX = smoothedX;
+                        lastY = smoothedY;
+                    } else {
+                        // Continue drawing using smoothed coordinates
+                        drawOnCanvas(lastX, lastY, smoothedX, smoothedY);
+                        lastX = smoothedX;
+                        lastY = smoothedY;
+                    }
+                } else {
+                    // Not pointing, stop drawing
+                    isDrawing = false;
+                    smoothedX = null;
+                    smoothedY = null;
+                    
+                    // Draw a visual indicator that we are just tracking, not drawing
+                    trackingCtx.beginPath();
+                    trackingCtx.arc(indexTip.x * trackingCanvasElement.width, indexTip.y * trackingCanvasElement.height, 5, 0, 2 * Math.PI);
+                    trackingCtx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                    trackingCtx.fill();
+                }
+            } else {
+                // No hand detected
+                isDrawing = false;
+                smoothedX = null;
+                smoothedY = null;
+            }
+            trackingCtx.restore();
+        }
+
+        function drawOnCanvas(startX, startY, endX, endY) {
+            drawingCtx.beginPath();
+            drawingCtx.moveTo(startX, startY);
+            drawingCtx.lineTo(endX, endY);
+            drawingCtx.strokeStyle = currentColor;
+            drawingCtx.lineWidth = brushSize;
+            drawingCtx.lineCap = 'round';
+            drawingCtx.lineJoin = 'round';
+            drawingCtx.stroke();
+            drawingCtx.closePath();
+            
+            // Add a slight glow effect
+            drawingCtx.shadowBlur = brushSize / 2;
+            drawingCtx.shadowColor = currentColor;
+            drawingCtx.stroke();
+            // Reset shadow to avoid slowing down rendering too much
+            drawingCtx.shadowBlur = 0; 
+        }
+
+        async function init() {
+            resizeCanvases();
+            initUI();
+
+            try {
+                // Request camera permission explicitly first to handle errors cleanly
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+                videoElement.srcObject = stream;
+                
+                statusText.innerText = "Initializing AI Models...";
+
+                const hands = new Hands({locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }});
+
+                hands.setOptions({
+                    maxNumHands: 1, // Only track one hand for drawing
+                    modelComplexity: 1, // 0 for speed, 1 for accuracy
+                    minDetectionConfidence: 0.7,
+                    minTrackingConfidence: 0.5
+                });
+
+                hands.onResults(onResults);
+
+                const camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await hands.send({image: videoElement});
+                        
+                        // Hide overlay once first frame is processed
+                        if (statusOverlay.style.opacity !== '0') {
+                            statusOverlay.style.opacity = '0';
+                            setTimeout(() => statusOverlay.style.display = 'none', 500);
+                        }
+                    },
+                    width: 1280,
+                    height: 720
+                });
+
+                camera.start();
+
+            } catch (error) {
+                console.error("Error accessing camera:", error);
+                statusText.innerHTML = "Camera access denied or unavailable.<br>Please allow camera permissions.";
+                document.querySelector('.loader').style.display = 'none';
+                
+                // fallback status UI
+                statusText.style.color = '#ff3b30';
+                statusText.style.textAlign = 'center';
+            }
+        }
+
+        // Start the application
+        window.onload = init;
+
+    </script>
+</body>
+</html>
